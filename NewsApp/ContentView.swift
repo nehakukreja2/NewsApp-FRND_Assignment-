@@ -6,80 +6,126 @@
 //
 
 import SwiftUI
-import CoreData
 
 struct ContentView: View {
-    @Environment(\.managedObjectContext) private var viewContext
-
-    @FetchRequest(
-        sortDescriptors: [NSSortDescriptor(keyPath: \Item.timestamp, ascending: true)],
-        animation: .default)
-    private var items: FetchedResults<Item>
-
+    @StateObject private var viewModel = NewsAppViewModel()
+    @State private var selectedItems = [DropdownItem]()
+    @State private var isGridView: Bool = false
+    @State private var isExpanded: Bool = false
+    
     var body: some View {
         NavigationView {
-            List {
-                ForEach(items) { item in
-                    NavigationLink {
-                        Text("Item at \(item.timestamp!, formatter: itemFormatter)")
-                    } label: {
-                        Text(item.timestamp!, formatter: itemFormatter)
+            VStack {
+                FilterButtonWithExpandView(selectedItems: $selectedItems,categoriesList: $viewModel.categoriesList, isExpanded: $isExpanded, onFilterChanged: {
+                    if selectedItems.isEmpty {
+                        viewModel.hitAPIToGetTopHeadlines()
+                    } else {
+                        let selectedCategories = selectedItems.map { $0.title }
+                        viewModel.hitAPIToGetFilteredDataAccordingToCategory(selectedCategories: selectedCategories)
                     }
-                }
-                .onDelete(perform: deleteItems)
-            }
-            .toolbar {
-                ToolbarItem(placement: .navigationBarTrailing) {
-                    EditButton()
-                }
-                ToolbarItem {
-                    Button(action: addItem) {
-                        Label("Add Item", systemImage: "plus")
+                },
+                                           onToggleLayout: {
+                    isGridView.toggle()
+                })
+                if isGridView {
+                    if !selectedItems.isEmpty {
+                        ForEach(selectedItems, id: \.title) { category in
+                            let categoryTitle = category.title
+                            let filteredData = viewModel.topHeadlines.filter { $0.category == categoryTitle }
+                            
+                            Section(header: CustomSectionHeader(
+                                title: categoryTitle,
+                                destination: FilteredDataListView(
+                                    filteredData: filteredData,
+                                    selectedFilterCategory: categoryTitle,
+                                    isGridView: true
+                                )
+                            )) {
+                                ScrollView {
+                                    LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())]) {
+                                        ForEach(filteredData, id: \.id) { headline in
+                                            NewsGridView(
+                                                newsHeading: headline.name ?? "",
+                                                newsDescription: headline.description ?? "",
+                                                webViewURL: headline.url ?? ""
+                                            )
+                                            .padding(.all, 5)
+                                        }
+                                    }
+                                    .padding(.all, 15)
+                                }
+                                .scrollIndicators(.never)
+                            }
+                        }
+                    } else {
+                        ScrollView {
+                            LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())]) {
+                                ForEach(viewModel.topHeadlines, id: \.id) { headline in
+                                    NewsGridView(
+                                        newsHeading: headline.name ?? "",
+                                        newsDescription: headline.description ?? "",
+                                        webViewURL: headline.url ?? ""
+                                    )
+                                    .padding(.all, 5)
+                                }
+                            }
+                            .padding(.all, 15)
+                            .scrollIndicators(.never)
+                        }
                     }
+                } else {
+                    List {
+                        if !selectedItems.isEmpty {
+                            ForEach(selectedItems, id: \.title) { category in
+                                let categoryTitle = category.title
+                                let filteredData = viewModel.topHeadlines.filter { $0.category == categoryTitle }
+                                
+                                Section(header: CustomSectionHeader(
+                                    title: categoryTitle,
+                                    destination: FilteredDataListView(
+                                        filteredData: filteredData,
+                                        selectedFilterCategory: categoryTitle,
+                                        isGridView: true
+                                    )
+                                )) {
+                                    ForEach(viewModel.topHeadlines, id: \.id) { headline in
+                                        NewsListView(
+                                            newsHeading: headline.name ?? "",
+                                            newsDescription: headline.description ?? "",
+                                            webViewURL: headline.url ?? ""
+                                        )
+                                        .frame(maxWidth: .infinity)
+                                        .padding()
+                                        .listRowInsets(EdgeInsets())
+                                    }
+                                }
+                            }
+                        } else {
+                            ForEach(viewModel.topHeadlines, id: \.id) { headline in
+                                NewsListView(
+                                    newsHeading: headline.name ?? "",
+                                    newsDescription: headline.description ?? "",
+                                    webViewURL: headline.url ?? ""
+                                )
+                                .frame(maxWidth: .infinity)
+                                .padding()
+                                .listRowInsets(EdgeInsets())
+                            }
+                        }
+                    }
+                    .listStyle(PlainListStyle())
                 }
             }
-            Text("Select an item")
-        }
-    }
-
-    private func addItem() {
-        withAnimation {
-            let newItem = Item(context: viewContext)
-            newItem.timestamp = Date()
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
+            .onAppear {
+                viewModel.hitAPIToGetTopHeadlines()
+                selectedItems.removeAll()
+                let savedDisplayType = UserDefaults.standard.string(forKey: "Display_type") ?? DisplayType.grid.rawValue
+                isGridView = savedDisplayType == DisplayType.grid.rawValue
             }
-        }
-    }
-
-    private func deleteItems(offsets: IndexSet) {
-        withAnimation {
-            offsets.map { items[$0] }.forEach(viewContext.delete)
-
-            do {
-                try viewContext.save()
-            } catch {
-                // Replace this implementation with code to handle the error appropriately.
-                // fatalError() causes the application to generate a crash log and terminate. You should not use this function in a shipping application, although it may be useful during development.
-                let nsError = error as NSError
-                fatalError("Unresolved error \(nsError), \(nsError.userInfo)")
-            }
+            .navigationTitle("News")
         }
     }
 }
-
-private let itemFormatter: DateFormatter = {
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .medium
-    return formatter
-}()
 
 #Preview {
     ContentView().environment(\.managedObjectContext, PersistenceController.preview.container.viewContext)
